@@ -8,23 +8,30 @@ class OneRouterRoutePart
 	const DefaultValue = 'defaultValue';
 	const Optional = 'optional';
 
+	// Supported part types
+	const Type_String = 'string';
+	const Type_Int = 'int';
+	const Type_Bool = 'bool';
+
 	// Internal constants
 	const RoutePartPrefix = '{';
 	const RoutePartSuffix = '}';
-	const RoutePartTypes = [
-		'int',
-		'integer',
-		'bool',
-		'boolean'
+	const RoutePartUsableTypes = [
+		'string' => self::Type_String,
+		'int' => self::Type_Int,
+		'integer' => self::Type_Int,
+		'bool' => self::Type_Bool,
+		'boolean' => self::Type_Bool
 	];
 
-	private $parameterName = null;
-	private $type = false;
-	private $defaultValue = false;
-	private $isOptional = false;
-	private $isStatic = true;
 	private $routePart;
-	private $linkedUriPart = false;
+	private $uriPart;
+	private $value;
+	private $type = self::Type_String;
+	private $isStatic = true;
+	private $parameterName;
+	private $defaultValue;
+	private $isOptional = false;
 
 	/**
 	 * RoutePart constructor.
@@ -32,17 +39,26 @@ class OneRouterRoutePart
 	 */
 	public function __construct($routePart)
 	{
-		$this->parse($routePart);
+		$this->setRoutePart($routePart);
+	}
+
+	/**
+	 * Set route part - this will automatically parse it
+	 * @param string $routePart
+	 */
+	private function setRoutePart($routePart)
+	{
+		$this->routePart = $routePart;
+		$this->parse($this->routePart);
 	}
 
 	/**
 	 * Parse route part
 	 * @param string $routePart
+	 * @throws OneRouterException
 	 */
 	private function parse($routePart)
 	{
-		$this->routePart = $routePart;
-
 		// No need for calculations if it is a static part
 		if (!OnePHP::StringBeginsWith($routePart, self::RoutePartPrefix) || !OnePHP::StringEndsWith($routePart, self::RoutePartSuffix)) {
 			return;
@@ -61,9 +77,15 @@ class OneRouterRoutePart
 		$this->isStatic = false;
 		$this->parameterName = $matches[self::ParameterName];
 
+		// Handle type
 		$type = OnePHP::ValueIfExists(self::Type, $matches, false);
-		if ($type)
-			$this->type = $type;
+		if ($type) {
+			$validatedType = $this->validateType($type);
+			if ($validatedType)
+				$this->type = $validatedType;
+			else
+				throw new OneRouterException("Invalid route type found when parsing route '$type'");
+		}
 
 		$this->defaultValue = OnePHP::ValueIfExists(self::DefaultValue, $matches, $this->defaultValue);
 		$this->isOptional = !!OnePHP::ValueIfExists(self::Optional, $matches, $this->isOptional);
@@ -71,39 +93,42 @@ class OneRouterRoutePart
 
 	/**
 	 * Validate type against known types
-	 * @param string $type
-	 * @return bool
+	 * Return real type if matched - otherwise bool false
+	 * @param string $routePartType
+	 * @return mixed|bool
 	 */
-	public function IsValidType($type)
+	private function validateType($routePartType)
 	{
-		return in_array($type, self::RoutePartTypes);
+		return OnePHP::ValueIfExists($routePartType, self::RoutePartUsableTypes, false);
 	}
 
 	/**
-	 * See if $string matches $type
+	 * See if $string matches $this->type
 	 * @param string $string
-	 * @param string $type
 	 * @return bool
 	 */
-	public function MatchesType($string, $type)
+	private function matchesType($string)
 	{
-		switch ($type) {
-			case 'int':
-			case 'integer':
+		switch ($this->type) {
+			case self::Type_String:
+				return true;
+			case self::Type_Int:
 				return is_numeric($string);
-			case 'bool':
-			case 'boolean':
+			case self::Type_Bool:
 				return in_array(strtolower($string), ['true', 'false', '0', '1']);
+
+			default:
+				return false;
 		}
 	}
 
 	/**
-	 * Force $type from $string
+	 * Convert $string to $type
 	 * @param string $string
 	 * @param string $type
 	 * @return mixed
 	 */
-	public function ForceType($string, $type)
+	private function convertToType($string, $type)
 	{
 		switch ($type) {
 			case 'int':
@@ -112,11 +137,24 @@ class OneRouterRoutePart
 			case 'bool':
 			case 'boolean':
 				return boolval($string);
+
+			default:
+				return $string;
 		}
 	}
 
 	/**
-	 * @return string|bool
+	 * Get route part name
+	 * @return string
+	 */
+	public function GetName()
+	{
+		return $this->parameterName;
+	}
+
+	/**
+	 * Get parameter type (found in constants: Type_xxx)
+	 * @return string
 	 */
 	public function GetType()
 	{
@@ -138,30 +176,28 @@ class OneRouterRoutePart
 	 */
 	public function IsOptional()
 	{
-		return $this->isOptional || $this->defaultValue;
+		return $this->isOptional || $this->GetDefaultValue();
 	}
 
 	/**
 	 * Get default value for route part
-	 * @return string|bool
+	 * @return mixed
 	 */
 	public function GetDefaultValue()
 	{
 		return $this->defaultValue;
 	}
 
+	/**
+	 * Get value
+	 * @return mixed
+	 */
 	public function GetValue()
 	{
-		return $this->linkedUriPart ?: $this->GetDefaultValue();
-	}
+		if (!$this->value)
+			$this->value = $this->uriPart ? $this->convertToType($this->uriPart, $this->type) : $this->GetDefaultValue();
 
-	/**
-	 * Get route part name
-	 * @return string
-	 */
-	public function GetName()
-	{
-		return $this->parameterName;
+		return $this->value;
 	}
 
 	/**
@@ -172,6 +208,9 @@ class OneRouterRoutePart
 	{
 		if ($this->IsStatic())
 			return 10000;
+
+		if ($this->GetType() != self::Type_String)
+			return 5000;
 
 		return 1000;
 	}
@@ -189,7 +228,10 @@ class OneRouterRoutePart
 		if ($this->IsStatic() && $this->routePart != $uriPart)
 			return false;
 
-		$this->linkedUriPart = $uriPart;
+		if ($uriPart && !$this->matchesType($uriPart))
+			return false;
+
+		$this->uriPart = $uriPart;
 		return true;
 	}
 }
