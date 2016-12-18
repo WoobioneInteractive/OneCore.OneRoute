@@ -87,7 +87,7 @@ class OneRouterRoutePart
 				throw new OneRouterException("Invalid route type found when parsing route '$type'");
 		}
 
-		$this->defaultValue = OnePHP::ValueIfExists(self::DefaultValue, $matches, $this->defaultValue);
+		$this->defaultValue = $this->convertToType(OnePHP::ValueIfExists(self::DefaultValue, $matches, $this->defaultValue), $this->type);
 		$this->isOptional = !!OnePHP::ValueIfExists(self::Optional, $matches, $this->isOptional);
 	}
 
